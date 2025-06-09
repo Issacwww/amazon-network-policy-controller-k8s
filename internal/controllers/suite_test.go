@@ -78,9 +78,9 @@ var _ = BeforeSuite(func() {
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 
-	err = (&CRDReconciler{
+	err = (&PolicyEndpointCRDReconciler{
 		k8sClient: k8sClient,
-		logger:    logf.Log.WithName("controllers").WithName("crd"),
+		logger:    logf.Log.WithName("controllers").WithName("policyEndpointCrd"),
 	}).SetupWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 

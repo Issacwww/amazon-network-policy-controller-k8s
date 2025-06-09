@@ -35,6 +35,17 @@ const policyendpointsCrdName = "policyendpoints.networking.k8s.aws"
 //go:embed crds.yaml
 var policyEndpointsCrd string
 
+var desiredCRD *apiextensionsv1.CustomResourceDefinition
+
+func init() {
+	obj, err := decodePolicyEndpointsCrd()
+	if err != nil {
+		// Since this is during package initialization, we should panic if we can't load the CRD
+		panic(fmt.Errorf("failed to decode CRD from embedded YAML: %w", err))
+	}
+	desiredCRD = obj
+}
+
 func decodePolicyEndpointsCrd() (*apiextensionsv1.CustomResourceDefinition, error) {
 	decoder := scheme.Codecs.UniversalDeserializer()
 	obj := &apiextensionsv1.CustomResourceDefinition{}
@@ -46,15 +57,15 @@ func decodePolicyEndpointsCrd() (*apiextensionsv1.CustomResourceDefinition, erro
 	return obj, nil
 }
 
-func NewCRDReconciler(k8sClient client.Client, logger logr.Logger) *CRDReconciler {
-	return &CRDReconciler{
+func NewPolicyEndpointCRDReconciler(k8sClient client.Client, logger logr.Logger) *PolicyEndpointCRDReconciler {
+	return &PolicyEndpointCRDReconciler{
 		k8sClient: k8sClient,
 		logger:    logger,
 	}
 }
 
-// CRDReconciler reconciles a CRD object
-type CRDReconciler struct {
+// PolicyEndpointCRDReconciler reconciles a CRD object
+type PolicyEndpointCRDReconciler struct {
 	k8sClient client.Client
 	logger    logr.Logger
 }
@@ -64,22 +75,19 @@ type CRDReconciler struct {
 // +kubebuilder:rbac:groups=extensions,resources=crds/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update
 
-func (r *CRDReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *PolicyEndpointCRDReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = logf.FromContext(ctx)
 	r.logger.Info("Got reconcile request", "resource", req)
 	if req.Name != policyendpointsCrdName {
 		r.logger.Info("Ignoring reconcile request for non-policyendpoints CRD", "name", req.Name)
 		return ctrl.Result{}, nil
 	}
-	desiredCRD, err := decodePolicyEndpointsCrd()
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to load CRD from file: %w", err)
-	}
+
 	existing := &apiextensionsv1.CustomResourceDefinition{}
-	err = r.k8sClient.Get(ctx, types.NamespacedName{Name: desiredCRD.Name}, existing)
+	err := r.k8sClient.Get(ctx, types.NamespacedName{Name: desiredCRD.Name}, existing)
 	if err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			r.logger.Info("CRD not found, creating...")
+			r.logger.Info("Policy Endpoint CRD not found, creating...")
 			return ctrl.Result{}, r.k8sClient.Create(ctx, desiredCRD)
 		}
 		return ctrl.Result{}, err
@@ -88,9 +96,9 @@ func (r *CRDReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *CRDReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *PolicyEndpointCRDReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&apiextensionsv1.CustomResourceDefinition{}).
-		Named("crd").
+		Named("policyEndpointCrd").
 		Complete(r)
 }
