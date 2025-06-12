@@ -35,7 +35,7 @@ const policyendpointsCrdName = "policyendpoints.networking.k8s.aws"
 //go:embed crds.yaml
 var policyEndpointsCrd string
 
-var desiredCRD *apiextensionsv1.CustomResourceDefinition
+var DesiredCRD *apiextensionsv1.CustomResourceDefinition
 
 func init() {
 	obj, err := decodePolicyEndpointsCrd()
@@ -43,7 +43,7 @@ func init() {
 		// Since this is during package initialization, we should panic if we can't load the CRD
 		panic(fmt.Errorf("failed to decode CRD from embedded YAML: %w", err))
 	}
-	desiredCRD = obj
+	DesiredCRD = obj
 }
 
 func decodePolicyEndpointsCrd() (*apiextensionsv1.CustomResourceDefinition, error) {
@@ -84,11 +84,11 @@ func (r *PolicyEndpointCRDReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	existing := &apiextensionsv1.CustomResourceDefinition{}
-	err := r.k8sClient.Get(ctx, types.NamespacedName{Name: desiredCRD.Name}, existing)
+	err := r.k8sClient.Get(ctx, types.NamespacedName{Name: DesiredCRD.Name}, existing)
 	if err != nil {
 		if client.IgnoreNotFound(err) == nil {
 			r.logger.Info("Policy Endpoint CRD not found, creating...")
-			return ctrl.Result{}, r.k8sClient.Create(ctx, desiredCRD)
+			return ctrl.Result{}, r.k8sClient.Create(ctx, DesiredCRD)
 		}
 		return ctrl.Result{}, err
 	}

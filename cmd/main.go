@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/spf13/pflag"
@@ -29,9 +30,14 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "net/http/pprof"
 
+	"k8s.io/client-go/discovery"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/rest"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -57,8 +63,6 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
-	utilruntime.Must(policyinfo.AddToScheme(scheme))
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
@@ -122,6 +126,14 @@ func main() {
 		}
 	}
 
+	if enableNetworkPolicyController {
+		setupLog.Info("Network Policy controller is enabled, ensuring CRD is installed")
+		if err := checkAndInitializeCRD(ctx, restCFG); err != nil {
+			setupLog.Error(err, "Failed to ensure CRD is installed")
+			os.Exit(1)
+		}
+	}
+	utilruntime.Must(policyinfo.AddToScheme(scheme))
 	rtOpts := config.BuildRuntimeOptions(controllerCFG.RuntimeConfig, scheme)
 
 	mgr, err := ctrl.NewManager(restCFG, rtOpts)
@@ -129,19 +141,18 @@ func main() {
 		setupLog.Error(err, "unable to create controller manager")
 		os.Exit(1)
 	}
-
 	policyEndpointsManager := policyendpoints.NewPolicyEndpointsManager(mgr.GetClient(),
 		controllerCFG.EndpointChunkSize, ctrl.Log.WithName("endpoints-manager"))
 	finalizerManager := k8s.NewDefaultFinalizerManager(mgr.GetClient(), ctrl.Log.WithName("finalizer-manager"))
 	policyController := controllers.NewPolicyReconciler(mgr.GetClient(), policyEndpointsManager,
 		controllerCFG, finalizerManager, ctrl.Log.WithName("controllers").WithName("policy"))
-	policyEndpointCrdController := controllers.NewPolicyEndpointCRDReconciler(mgr.GetClient(), ctrl.Log.WithName("controllers").WithName("policyEndpointCrd"))
 	if enableNetworkPolicyController {
 		setupLog.Info("Network Policy controller is enabled, starting watches")
 		if err := policyController.SetupWithManager(ctx, mgr); err != nil {
 			setupLog.Error(err, "Unable to setup network policy controller")
 			os.Exit(1)
 		}
+		policyEndpointCrdController := controllers.NewPolicyEndpointCRDReconciler(mgr.GetClient(), ctrl.Log.WithName("controllers").WithName("policyEndpointCrd"))
 		setupLog.Info("starting watch policy endpoint crd...")
 		if err := policyEndpointCrdController.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Unable to setup CRD controller")
@@ -205,4 +216,39 @@ func getLoggerWithLogLevel(logLevel string) logr.Logger {
 		zap.Level(zapLevel),
 		zap.StacktraceLevel(zapcore.FatalLevel),
 	)
+}
+
+func checkAndInitializeCRD(ctx context.Context, restCFG *rest.Config) error {
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(restCFG)
+	if err != nil {
+		setupLog.Error(err, "unable to create dynamic client")
+		return err
+	}
+	crd := controllers.DesiredCRD.DeepCopy()
+	groupVersion := crd.Spec.Group + "/" + crd.Spec.Versions[0].Name
+	_, err = discoveryClient.ServerResourcesForGroupVersion(groupVersion)
+
+	if errors.IsNotFound(err) || discovery.IsGroupDiscoveryFailedError(err) {
+		setupLog.Info("CRD not found, installing it...", "CRD", crd.Name)
+		apiExtClient, err := apiextclient.NewForConfig(restCFG)
+		if err != nil {
+			setupLog.Error(err, "Failed to init api ext client")
+			return err
+		}
+		if _, err = apiExtClient.ApiextensionsV1().CustomResourceDefinitions().Create(ctx, crd, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
+			setupLog.Error(err, "Failed to create CRD", "CRD", crd.Name)
+			return err
+		}
+		for i := 0; i < 5; i++ {
+			time.Sleep(1 * time.Second)
+			_, err = discoveryClient.ServerResourcesForGroupVersion(groupVersion)
+			if err == nil {
+				setupLog.Info("CRD is now present", "CRD", crd.Name)
+				return nil
+			}
+			setupLog.Info("Waiting for CRD to be present", "CRD", crd.Name, "attempt", i+1)
+		}
+	}
+	setupLog.Info("CRD is now present", "CRD", controllers.DesiredCRD.Name)
+	return nil
 }
