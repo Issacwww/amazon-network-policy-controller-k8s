@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/aws/amazon-network-policy-controller-k8s/pkg/health"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/k8s"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -21,6 +22,9 @@ import (
 type ConfigmapManager interface {
 	MonitorConfigMap(ctx context.Context) error
 	IsControllerEnabled() bool
+	// Health state management methods
+	SetHealthStateManager(healthMgr *health.HealthStateManager)
+	GetHealthStateManager() *health.HealthStateManager
 }
 
 var _ ConfigmapManager = (*defaultConfigmapManager)(nil)
@@ -36,6 +40,8 @@ type defaultConfigmapManager struct {
 	monitorStopChan        chan struct{}
 	storeNotifyChan        chan struct{}
 	configMapCheckFunction func(*corev1.ConfigMap) bool
+	// Health state management
+	healthStateMgr *health.HealthStateManager
 }
 
 func NewConfigmapManager(resourceRef types.NamespacedName, clientSet *kubernetes.Clientset,
@@ -52,6 +58,16 @@ func NewConfigmapManager(resourceRef types.NamespacedName, clientSet *kubernetes
 		storeNotifyChan:        storeNotifyChan,
 		configMapCheckFunction: configmapCheckFunction,
 	}
+}
+
+// SetHealthStateManager sets the health state manager for this configmap manager
+func (m *defaultConfigmapManager) SetHealthStateManager(healthMgr *health.HealthStateManager) {
+	m.healthStateMgr = healthMgr
+}
+
+// GetHealthStateManager returns the health state manager
+func (m *defaultConfigmapManager) GetHealthStateManager() *health.HealthStateManager {
+	return m.healthStateMgr
 }
 
 // IsControllerEnabled returns the initial state of the policy controller.
@@ -81,8 +97,22 @@ func (m *defaultConfigmapManager) MonitorConfigMap(ctx context.Context) error {
 
 	if _, err := m.setInitialControllerState(); err != nil {
 		m.logger.Info("Failed to set initial state", "err", err)
+		// Report degraded state if configmap is missing
+		if m.healthStateMgr != nil {
+			m.healthStateMgr.SetDegraded("ConfigMap not found or invalid")
+		}
 		return err
 	}
+
+	// Clear any degraded state if configmap is available
+	if m.healthStateMgr != nil {
+		state := m.healthStateMgr.GetState()
+		if state.DegradedReason != "" && contains(state.DegradedReason, "ConfigMap") {
+			// Clear degraded state for configmap issues
+			m.healthStateMgr.ClearDegraded()
+		}
+	}
+
 	return nil
 }
 
@@ -100,6 +130,10 @@ func (m *defaultConfigmapManager) listenForConfigMapUpdates() {
 			enabled, err := m.getCurrentEnabledConfig()
 			if err != nil {
 				m.logger.Error(err, "Failed to get controller state from configmap")
+				// Report degraded state if configmap becomes unavailable
+				if m.healthStateMgr != nil {
+					m.healthStateMgr.SetDegraded("ConfigMap not found or invalid")
+				}
 				return
 			}
 			m.logger.V(1).Info("Received configmap notification", "initial", m.initialState,
@@ -138,4 +172,12 @@ func (m *defaultConfigmapManager) setInitialControllerState() (retVal bool, err 
 		return false, errors.New("failed to sync configmap cache")
 	}
 	return m.getCurrentEnabledConfig()
+}
+
+// contains checks if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr ||
+		(len(s) > len(substr) && (s[:len(substr)] == substr ||
+			s[len(s)-len(substr):] == substr ||
+			contains(s[1:], substr))))
 }

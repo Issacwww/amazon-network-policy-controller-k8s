@@ -3,7 +3,6 @@ package config
 import (
 	"time"
 
-	"github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/k8s"
 	networkingv1 "k8s.io/api/networking/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -91,7 +90,8 @@ func BuildRestConfig(rtCfg RuntimeConfig) (*rest.Config, error) {
 // BuildCacheOptions returns a cache.Options struct for this controller.
 func BuildCacheOptions() cache.Options {
 	cacheOptions := cache.Options{
-		ReaderFailOnMissingInformer: true,
+		// Allow cache to start even if some informers (like PolicyEndpoint) are missing
+		ReaderFailOnMissingInformer: false, // 允许缺少 CRD 时启动
 		ByObject: map[client.Object]cache.ByObject{
 			&corev1.Pod{}: {
 				Transform: k8s.StripDownPodTransformFunc,
@@ -101,7 +101,7 @@ func BuildCacheOptions() cache.Options {
 			},
 			&corev1.Namespace{}:           {},
 			&networkingv1.NetworkPolicy{}: {},
-			&v1alpha1.PolicyEndpoint{}:    {},
+			// PolicyEndpoint 不在 ByObject 里，避免 manager 启动失败
 		},
 	}
 	return cacheOptions

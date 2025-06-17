@@ -12,6 +12,7 @@ const (
 	flagEnableConfigMapCheck         = "enable-configmap-check"
 	flagEndpointChunkSize            = "endpoint-chunk-size"
 	flagEnableGoProfiling            = "enable-goprofiling"
+	flagCustomHealthPort             = "custom-health-port"
 	defaultLogLevel                  = "info"
 	defaultMaxConcurrentReconciles   = 3
 	defaultEndpointsChunkSize        = 200
@@ -19,6 +20,7 @@ const (
 	flagPodUpdateBatchPeriodDuration = "pod-update-batch-period-duration"
 	defaultBatchPeriodDuration       = 1 * time.Second
 	defaultEnableGoProfiling         = false
+	defaultCustomHealthPort          = ":8081"
 )
 
 // ControllerConfig contains the controller configuration
@@ -37,6 +39,8 @@ type ControllerConfig struct {
 	RuntimeConfig RuntimeConfig
 	// EnableGoProfiling enables the goprofiling for dev purpose
 	EnableGoProfiling bool
+	// CustomHealthPort specifies the port for the custom health server
+	CustomHealthPort string
 }
 
 func (cfg *ControllerConfig) BindFlags(fs *pflag.FlagSet) {
@@ -52,5 +56,7 @@ func (cfg *ControllerConfig) BindFlags(fs *pflag.FlagSet) {
 		"Duration between batch updates of pods")
 	fs.BoolVar(&cfg.EnableGoProfiling, flagEnableGoProfiling, defaultEnableGoProfiling,
 		"Enable goprofiling for develop purpose")
+	fs.StringVar(&cfg.CustomHealthPort, flagCustomHealthPort, defaultCustomHealthPort,
+		"Port for the custom health server (e.g., :8081)")
 	cfg.RuntimeConfig.BindFlags(fs)
 }
